@@ -1,0 +1,200 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function childPath(childId) {
+      return /databases/$(database)/documents/children/$(childId);
+    }
+
+    function childExists(childId) {
+      return exists(childPath(childId));
+    }
+
+    function childData(childId) {
+      return get(childPath(childId)).data;
+    }
+
+    function isParent(childId) {
+      return signedIn()
+        && childExists(childId)
+        && childData(childId).parentIds is list
+        && request.auth.uid in childData(childId).parentIds;
+    }
+
+    function isLinked(child) {
+      return child.status == 'vinculado'
+        && child.deviceUid is string
+        && child.deviceUid.size() > 0;
+    }
+
+    function isDevice(childId) {
+      return signedIn()
+        && childExists(childId)
+        && isLinked(childData(childId))
+        && childData(childId).deviceUid == request.auth.uid;
+    }
+
+    function consentAllows(parentId, child, purpose) {
+      let consentPath =
+        /databases/$(database)/documents/users/$(parentId)/privacy_consents/current;
+
+      return exists(consentPath)
+        && get(consentPath).data.status in ['active', 'partially_revoked']
+        && get(consentPath).data.termsVersion == child.privacyAuthorization.termsVersion
+        && get(consentPath).data.privacyVersion == child.privacyAuthorization.privacyVersion
+        && get(consentPath).data.acceptTerms == true
+        && get(consentPath).data.acknowledgePrivacy == true
+        && get(consentPath).data.guardianDeclaration == true
+        && (
+          !('revocationPending' in get(consentPath).data)
+          || get(consentPath).data.revocationPending == false
+        )
+        && get(consentPath).data.purposes[purpose] == true;
+    }
+
+    function allGuardiansAllow(child, purpose) {
+      return child.parentIds is list
+        && child.parentIds.size() >= 1
+        && child.parentIds.size() <= 2
+        && consentAllows(child.parentIds[0], child, purpose)
+        && (
+          child.parentIds.size() == 1
+          || consentAllows(child.parentIds[1], child, purpose)
+        );
+    }
+
+    function purposeAllowed(childId, purpose) {
+      let child = childData(childId);
+
+      return childExists(childId)
+        && isLinked(child)
+        && child.privacyAuthorization.purposes[purpose] == true
+        && allGuardiansAllow(child, purpose);
+    }
+
+    function parentCan(childId, purpose) {
+      return isParent(childId) && purposeAllowed(childId, purpose);
+    }
+
+    function deviceCan(childId, purpose) {
+      return isDevice(childId) && purposeAllowed(childId, purpose);
+    }
+
+    function filterPurpose(category) {
+      return category == 'app' ? 'app_filtering' : 'domain_filtering';
+    }
+
+    match /users/{uid} {
+      allow read, create, update: if signedIn()
+        && request.auth.uid == uid;
+      allow delete: if false;
+
+      match /fcmTokens/{tokenId} {
+        allow read, create, update, delete: if signedIn()
+          && request.auth.uid == uid;
+      }
+
+      match /privacy_consents/{documentId} {
+        allow read, write: if false;
+      }
+
+      match /privacy_events/{eventId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /children/{childId} {
+      allow read: if isParent(childId);
+      allow create, update, delete: if false;
+
+      match /alerts/{alertId} {
+        allow read, delete: if parentCan(childId, 'alerts');
+        allow create: if deviceCan(childId, 'alerts');
+        allow update: if false;
+      }
+
+      match /device_status/{documentId} {
+        allow read: if parentCan(childId, 'device_status');
+        allow create, update: if deviceCan(childId, 'device_status');
+        allow delete: if false;
+      }
+
+      match /usage_reports/{reportId} {
+        allow read: if parentCan(childId, 'usage_stats');
+        allow create, update: if deviceCan(childId, 'usage_stats');
+        allow delete: if false;
+      }
+
+      match /installed_apps/{appId} {
+        allow read: if parentCan(childId, 'app_filtering');
+        allow create, update, delete: if deviceCan(childId, 'app_filtering');
+      }
+
+      match /filter_rules/{ruleId} {
+        allow read: if (
+          isParent(childId)
+          && resource.data.category in ['app', 'url']
+          && parentCan(childId, filterPurpose(resource.data.category))
+        ) || (
+          isDevice(childId)
+          && resource.data.category in ['app', 'url']
+          && deviceCan(childId, filterPurpose(resource.data.category))
+        );
+
+        allow create: if isParent(childId)
+          && request.resource.data.category in ['app', 'url']
+          && parentCan(childId, filterPurpose(request.resource.data.category));
+
+        allow update: if isParent(childId)
+          && resource.data.category in ['app', 'url']
+          && request.resource.data.category == resource.data.category
+          && parentCan(childId, filterPurpose(resource.data.category));
+
+        allow delete: if isParent(childId)
+          && resource.data.category in ['app', 'url']
+          && parentCan(childId, filterPurpose(resource.data.category));
+      }
+
+      match /reportes/{documentId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /telemetria/{childId} {
+      allow read: if parentCan(childId, 'location')
+        || deviceCan(childId, 'location');
+
+      allow create, update: if deviceCan(childId, 'location');
+      allow delete: if false;
+
+      match /historial/{entryId} {
+        allow read: if parentCan(childId, 'location')
+          || deviceCan(childId, 'location');
+
+        allow create: if deviceCan(childId, 'location');
+        allow update, delete: if false;
+      }
+    }
+
+    match /pairing_codes/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /devices/{deviceId} {
+      allow read, write: if false;
+    }
+
+    match /configuraciones/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
