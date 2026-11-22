@@ -53,7 +53,7 @@ test('aceptar, consultar y revocar consentimiento en Firestore Emulator', async 
     assert.equal(result.valid, true);
     assert.equal(result.consent.purposes.location, true);
 
-    // 3. Revocar solamente ubicación.
+    // 3. Revoke location only.
     const partial = await revokeConsent(uid, 'location');
     assert.equal(partial.success, true);
 
@@ -62,7 +62,7 @@ test('aceptar, consultar y revocar consentimiento en Firestore Emulator', async 
     assert.equal(result.consent.purposes.location, false);
     assert.equal(result.consent.purposes.usage_stats, true);
 
-    // 4. Revocar todas las finalidades restantes.
+    // 4. Revoke every remaining purpose.
     const full = await revokeConsent(uid, 'all');
     assert.equal(full.success, true);
 
@@ -85,7 +85,7 @@ test('aceptar, consultar y revocar consentimiento en Firestore Emulator', async 
 
     console.log('Integración de privacidad completada en Firestore Emulator.');
   } finally {
-    // Limpiar exclusivamente los documentos de este UID de prueba.
+    // Only clean up this test UID's documents.
     const events = await eventsRef.get();
     const batch = db.batch();
 

@@ -95,7 +95,7 @@ test('Firestore aplica las reglas de privacidad y autorización', async () => {
     doc(db, 'users', uid, 'privacy_consents', 'current');
 
   try {
-    // Preparar datos exclusivamente dentro del entorno de pruebas.
+    // Prepare data only inside the test environment.
     await env.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
 
@@ -135,7 +135,7 @@ test('Firestore aplica las reglas de privacidad y autorización', async () => {
       });
     });
 
-    // 1. Tutores autorizados pueden consultar los datos correspondientes.
+    // 1. Authorised guardians can read the matching data.
     await assertSucceeds(getDoc(childRef(parentDb)));
     await assertSucceeds(getDoc(telemetryRef(parentDb)));
     await assertSucceeds(getDoc(alertRef(parentDb)));
@@ -144,7 +144,7 @@ test('Firestore aplica las reglas de privacidad y autorización', async () => {
     await assertSucceeds(getDoc(filterRef(parentDb)));
     await assertSucceeds(getDoc(urlFilterRef(parentDb)));
 
-    // 2. El dispositivo vinculado puede acceder a sus datos autorizados.
+    // 2. The linked device can access its authorised data.
     await assertSucceeds(getDoc(telemetryRef(deviceDb)));
     await assertSucceeds(getDoc(filterRef(deviceDb)));
     await assertSucceeds(getDoc(urlFilterRef(deviceDb)));
@@ -169,18 +169,18 @@ test('Firestore aplica las reglas de privacidad y autorización', async () => {
     await assertFails(getDoc(telemetryRef(strangerDb)));
     await assertFails(getDoc(alertRef(strangerDb)));
 
-    // 4. Un usuario no puede modificar el perfil del menor.
+    // 4. A user cannot modify the minor's profile.
     await assertFails(updateDoc(childRef(parentDb), {
       status: 'desvinculado',
     }));
 
-    // 5. Los clientes no pueden leer ni modificar consentimientos.
+    // 5. Clients cannot read or modify consents.
     await assertFails(getDoc(consentRef(parentDb, parent1)));
     await assertFails(updateDoc(consentRef(parentDb, parent1), {
       revocationPending: false,
     }));
 
-    // 6. Una revocación pendiente bloquea el acceso inmediatamente.
+    // 6. A pending revocation blocks access immediately.
     await env.withSecurityRulesDisabled(async (context) => {
       await updateDoc(
         doc(context.firestore(), 'users', parent2, 'privacy_consents', 'current'),
@@ -192,8 +192,8 @@ test('Firestore aplica las reglas de privacidad y autorización', async () => {
     await assertFails(getDoc(telemetryRef(deviceDb)));
     await assertFails(getDoc(alertRef(parentDb)));
 
-    // 7. Restaurar consentimiento y retirar la autorización de ubicación
-    // del segundo tutor.
+    // 7. Restore consent and withdraw the second guardian's location
+    // authorisation.
     await env.withSecurityRulesDisabled(async (context) => {
       await updateDoc(
         doc(context.firestore(), 'users', parent2, 'privacy_consents', 'current'),
@@ -250,16 +250,16 @@ test('Firestore aplica las reglas de privacidad y autorización', async () => {
     await assertFails(getDoc(urlFilterRef(parentDb)));
     await assertFails(getDoc(urlFilterRef(deviceDb)));
 
-    // 10. Un dispositivo diferente no puede escribir telemetría.
+    // 10. A different device cannot write telemetry.
     await assertFails(setDoc(
       doc(strangerDb, 'telemetria', childId),
       { latitude: 1, longitude: 1 },
     ));
 
-    // 11. Los clientes no pueden eliminar el perfil.
+    // 11. Clients cannot delete the profile.
     await assertFails(deleteDoc(childRef(parentDb)));
 
-    // 12. Un perfil desvinculado bloquea al dispositivo.
+    // 12. An unlinked profile blocks the device.
     await env.withSecurityRulesDisabled(async (context) => {
       await updateDoc(doc(context.firestore(), 'children', childId), {
         status: 'esperando_vinculacion',

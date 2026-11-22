@@ -8,6 +8,7 @@ const privacyRouter = require('./routes/privacy');
 const { ServiceError } = require('./services/child_service');
 
 const app = express();
+app.set('trust proxy', 'loopback');
 
 app.disable('x-powered-by');
 app.use(helmet());
@@ -15,7 +16,9 @@ app.use(express.json({ limit: '32kb' }));
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 100,
+  // A Tracker checks its authorisation every minute; several families may
+  // share an IP (NAT). 300 per 15 min leaves headroom without allowing abuse.
+  limit: 300,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: {
@@ -76,9 +79,32 @@ const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';
 
 if (require.main === module) {
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log(`Vesta API escuchando en ${HOST}:${PORT}`);
   });
+
+  // Push notifications and monitoring of disconnected devices.
+  // Can be turned off with VESTA_ALERT_DISPATCH=0 (e.g. if an equivalent
+  // Cloud Function is ever deployed).
+  let dispatcher = null;
+  if (process.env.VESTA_ALERT_DISPATCH !== '0') {
+    const { admin, db } = require('./config/firebase');
+    const { createAlertDispatcher } = require('./services/alert_dispatcher');
+    dispatcher = createAlertDispatcher({
+      db,
+      messaging: admin.messaging(),
+      FieldValue: admin.firestore.FieldValue,
+    });
+    dispatcher.start();
+  }
+
+  const shutdown = () => {
+    dispatcher?.stop();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 10_000).unref();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 module.exports = app;

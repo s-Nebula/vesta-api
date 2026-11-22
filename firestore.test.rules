@@ -85,6 +85,117 @@ service cloud.firestore {
       return isDevice(childId) && purposeAllowed(childId, purpose);
     }
 
+    function validSchedule(schedule) {
+      return schedule is map
+        && schedule.keys().hasOnly(['days', 'start', 'end'])
+        && schedule.days is list
+        && schedule.days.size() >= 1
+        && schedule.days.size() <= 7
+        && schedule.start is string
+        && schedule.start.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        && schedule.end is string
+        && schedule.end.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+    }
+
+    function controlPurpose(controlId) {
+      return controlId == 'web_protection' ? 'domain_filtering' : 'app_filtering';
+    }
+
+    function stampedByMe(data) {
+      return data.updatedBy == request.auth.uid
+        && data.updatedAt == request.time;
+    }
+
+    function validControl(controlId, data) {
+      return (controlId == 'study_mode' && validStudyMode(data))
+        || (controlId == 'app_limits' && validAppLimits(data))
+        || (controlId == 'web_protection' && validWebProtection(data));
+    }
+
+    function validAppLimits(data) {
+      return data.keys().hasOnly(['limits', 'updatedAt', 'updatedBy'])
+        && data.limits is map
+        && data.limits.size() <= 100
+        && stampedByMe(data);
+    }
+
+    function validWebProtection(data) {
+      return data.keys().hasOnly(['safeSearch', 'blockDoh', 'updatedAt', 'updatedBy'])
+        && data.safeSearch is bool
+        && data.blockDoh is bool
+        && stampedByMe(data);
+    }
+
+    function validZone(data) {
+      return data.keys().hasOnly([
+          'name', 'lat', 'lng', 'radius', 'notifyEnter', 'notifyExit',
+          'updatedAt', 'updatedBy'
+        ])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 40
+        && data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180
+        && data.radius is number && data.radius >= 50 && data.radius <= 5000
+        && data.notifyEnter is bool
+        && data.notifyExit is bool
+        && stampedByMe(data);
+    }
+
+    function validNewRequest(data) {
+      return data.keys().hasOnly([
+          'type', 'packageName', 'appName', 'minutes', 'message',
+          'status', 'createdAt'
+        ])
+        && data.type in ['unlock_app', 'extra_time']
+        && data.packageName is string
+        && data.packageName.size() >= 1 && data.packageName.size() <= 200
+        && data.appName is string && data.appName.size() <= 100
+        && data.minutes is int && data.minutes >= 5 && data.minutes <= 240
+        && (!('message' in data) || (data.message is string && data.message.size() <= 200))
+        && data.status == 'pending'
+        && data.createdAt == request.time;
+    }
+
+    function validResolution(data) {
+      let changed = data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+          'status', 'resolvedAt', 'resolvedBy', 'grantedMinutes', 'approvedUntil'
+        ])
+        && data.status in ['approved', 'denied']
+        && data.resolvedBy == request.auth.uid
+        && data.resolvedAt == request.time
+        && (
+          data.status == 'denied'
+          || (
+            data.grantedMinutes is int
+            && data.grantedMinutes >= 5 && data.grantedMinutes <= 240
+            && data.approvedUntil is timestamp
+            && data.approvedUntil > request.time
+            && data.approvedUntil <= request.time + duration.value(241, 'm')
+          )
+        );
+    }
+
+    function validStudyMode(data) {
+      return data.keys().hasOnly([
+          'active', 'endsAt', 'allowedApps', 'schedules',
+          'updatedAt', 'updatedBy'
+        ])
+        && data.active is bool
+        && (!('endsAt' in data) || data.endsAt == null || data.endsAt is timestamp)
+        && data.allowedApps is list
+        && data.allowedApps.size() <= 100
+        && data.schedules is list
+        && data.schedules.size() <= 7
+        && (data.schedules.size() < 1 || validSchedule(data.schedules[0]))
+        && (data.schedules.size() < 2 || validSchedule(data.schedules[1]))
+        && (data.schedules.size() < 3 || validSchedule(data.schedules[2]))
+        && (data.schedules.size() < 4 || validSchedule(data.schedules[3]))
+        && (data.schedules.size() < 5 || validSchedule(data.schedules[4]))
+        && (data.schedules.size() < 6 || validSchedule(data.schedules[5]))
+        && (data.schedules.size() < 7 || validSchedule(data.schedules[6]))
+        && stampedByMe(data);
+    }
+
     function filterPurpose(category) {
       return category == 'app' ? 'app_filtering' : 'domain_filtering';
     }
@@ -109,7 +220,11 @@ service cloud.firestore {
     }
 
     match /children/{childId} {
-      allow read: if isParent(childId);
+      // resource.data is used (not get()) so it also works in queries:
+      // "children where parentIds contains my uid". Firestore only allows the
+      // query if its filter guarantees this condition.
+      allow read: if signedIn()
+        && request.auth.uid in resource.data.parentIds;
       allow create, update, delete: if false;
 
       match /alerts/{alertId} {
@@ -131,7 +246,9 @@ service cloud.firestore {
       }
 
       match /installed_apps/{appId} {
-        allow read: if parentCan(childId, 'app_filtering');
+        // The device also reads its catalogue to sync changes.
+        allow read: if parentCan(childId, 'app_filtering')
+          || deviceCan(childId, 'app_filtering');
         allow create, update, delete: if deviceCan(childId, 'app_filtering');
       }
 
@@ -162,6 +279,55 @@ service cloud.firestore {
 
       match /reportes/{documentId} {
         allow read, write: if false;
+      }
+
+      // Controls set by the guardian and applied on the device.
+      //   study_mode, app_limits -> app_filtering purpose
+      //   web_protection         -> domain_filtering purpose
+      match /controls/{controlId} {
+        allow read: if controlId in ['study_mode', 'app_limits', 'web_protection'] && (
+          parentCan(childId, controlPurpose(controlId))
+          || deviceCan(childId, controlPurpose(controlId))
+        );
+
+        allow create, update: if controlId in ['study_mode', 'app_limits', 'web_protection']
+          && parentCan(childId, controlPurpose(controlId))
+          && validControl(controlId, request.resource.data);
+
+        allow delete: if controlId in ['study_mode', 'app_limits', 'web_protection']
+          && parentCan(childId, controlPurpose(controlId));
+      }
+
+      // Safe zones (geofences). The guardian creates them; the device
+      // uses them to report arrivals and departures.
+      match /zones/{zoneId} {
+        allow read: if parentCan(childId, 'location')
+          || deviceCan(childId, 'location');
+        allow create, update: if parentCan(childId, 'location')
+          && validZone(request.resource.data);
+        allow delete: if parentCan(childId, 'location');
+      }
+
+      // Requests from the minor ("more time", "unlock app").
+      match /requests/{requestId} {
+        allow read: if parentCan(childId, 'app_filtering')
+          || deviceCan(childId, 'app_filtering');
+
+        allow create: if deviceCan(childId, 'app_filtering')
+          && validNewRequest(request.resource.data);
+
+        // The guardian can only resolve a pending request.
+        allow update: if parentCan(childId, 'app_filtering')
+          && resource.data.status == 'pending'
+          && validResolution(request.resource.data);
+
+        allow delete: if parentCan(childId, 'app_filtering');
+      }
+
+      // Weekly summaries: generated by the server.
+      match /weekly_summaries/{weekId} {
+        allow read: if parentCan(childId, 'alerts');
+        allow write: if false;
       }
     }
 

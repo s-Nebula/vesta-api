@@ -84,3 +84,25 @@ test('acepta los límites válidos de color', () => {
     );
   }
 });
+
+const { validateChildUpdate } = require('../src/services/child_service');
+
+test('validateChildUpdate acepta cambios parciales válidos', () => {
+  assert.deepEqual(validateChildUpdate({ nombre: '  Ana ' }), { nombre: 'Ana' });
+  assert.deepEqual(validateChildUpdate({ edad: 11, color: 5 }), { edad: 11, color: 5 });
+});
+
+test('validateChildUpdate rechaza campos protegidos, vacíos o inválidos', () => {
+  for (const data of [
+    {},
+    null,
+    [],
+    { status: 'vinculado' },
+    { parentIds: ['x'] },
+    { nombre: '' },
+    { edad: -1 },
+    { color: 0x1FFFFFFFF },
+  ]) {
+    assert.throws(() => validateChildUpdate(data), (error) => error.status === 400);
+  }
+});

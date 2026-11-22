@@ -63,7 +63,7 @@ async function verifyParent(childId, uid) {
   return { childRef, child };
 }
 
-// Crea un perfil compartido y un código de vinculación.
+// Creates a shared profile and a linking code.
 
 exports.createChild = onCall(async (request) => {
   const uid = requireParent(request);
@@ -122,7 +122,7 @@ exports.createChild = onCall(async (request) => {
   );
 });
 
-// Vincula un dispositivo Tracker autenticado anónimamente.
+// Links an anonymously authenticated Tracker device.
 
 exports.linkDevice = onCall(async (request) => {
   const uid = requireAuth(request);
@@ -212,7 +212,7 @@ exports.linkDevice = onCall(async (request) => {
   return { childId, status: "vinculado" };
 });
 
-// Desvincula el dispositivo desde cualquiera de los padres.
+// Unlinks the device from either parent.
 
 exports.unlinkDevice = onCall(async (request) => {
   const uid = requireParent(request);
@@ -411,7 +411,7 @@ exports.createParentInvitation = onCall(async (request) => {
     emailSent: false,
   };
 });
-// Acepta una invitación desde la cuenta destinataria.
+// Accepts an invitation from the recipient account.
 
 
 exports.acceptParentInvitation = onCall(async (request) => {
@@ -504,7 +504,7 @@ exports.acceptParentInvitation = onCall(async (request) => {
   return { success: true };
 });
 
-// Revoca una invitación pendiente.
+// Revokes a pending invitation.
 exports.revokeParentInvitation = onCall(async (request) => {
   const uid = requireParent(request);
   const invitationId = String(request.data?.invitationId || "").trim();
@@ -565,7 +565,7 @@ exports.revokeParentInvitation = onCall(async (request) => {
 
   return { success: true };
 });
-// Envía alertas a todos los padres del perfil.
+// Sends alerts to all the profile's parents.
 exports.enviarNotificacionAlerta = onDocumentCreated(
   `${CHILDREN}/{childId}/alerts/{alertId}`,
   async (event) => {

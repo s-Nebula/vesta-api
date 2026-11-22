@@ -83,7 +83,7 @@ test('crear, vincular y desvincular un perfil en Firestore Emulator', async () =
     telemetry = await db.collection('telemetria').doc(childId).get();
     assert.equal(telemetry.data().status, 'desvinculado');
 
-    // 4. Revincular el mismo dispositivo.
+    // 4. Relink the same device.
     const relinked = await linkDevice(deviceUid, secondCode);
     assert.equal(relinked.childId, childId);
     assert.equal(relinked.status, 'vinculado');
@@ -96,7 +96,7 @@ test('crear, vincular y desvincular un perfil en Firestore Emulator', async () =
     assert.equal(child.data().deviceUid, deviceUid);
 
   } finally {
-    // Limpiar únicamente los documentos creados por esta prueba.
+    // Only clean up the documents created by this test.
     if (childId) {
       await db.collection('children').doc(childId).delete();
       await db.collection('telemetria').doc(childId).delete();

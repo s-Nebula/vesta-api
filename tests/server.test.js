@@ -29,7 +29,7 @@ test('API HTTP: salud, rutas y autenticación', async (t) => {
   const missing = await fetch(`${base}/ruta-inexistente`);
   assert.equal(missing.status, 404);
 
-  // Crear perfil sin autenticación.
+  // Create a profile without authentication.
   const create = await fetch(`${base}/api/children`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -41,7 +41,7 @@ test('API HTTP: salud, rutas y autenticación', async (t) => {
   });
   assert.equal(create.status, 401);
 
-  // Vincular dispositivo sin autenticación.
+  // Link a device without authentication.
   const link = await fetch(`${base}/api/devices/link`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

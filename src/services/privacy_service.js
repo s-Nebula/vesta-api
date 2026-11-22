@@ -29,6 +29,18 @@ function validateConsentInput(data) {
     throw new ServiceError(400, 'invalid-argument', 'Datos no válidos.');
   }
 
+  // Never record acceptances while the documents are still drafts.
+  if (
+    TERMS_VERSION.toLowerCase().includes('draft') ||
+    PRIVACY_VERSION.toLowerCase().includes('draft')
+  ) {
+    throw new ServiceError(
+      409,
+      'failed-precondition',
+      'Los documentos legales todavía están pendientes de aprobación.'
+    );
+  }
+
   if (
     data.termsVersion !== TERMS_VERSION ||
     data.privacyVersion !== PRIVACY_VERSION
@@ -119,8 +131,8 @@ function deniedPurposes() {
 }
 
 /**
- * Recalcula los permisos de un menor usando el consentimiento vigente
- * de todos sus tutores. La escritura se realiza en una transacción.
+ * Recomputes a minor's permissions using the current consent of all
+ * their guardians. The write happens in a transaction.
  */
 async function recalculateChildPrivacyAuthorization(childId) {
   const childRef = db.collection('children').doc(childId);
@@ -204,7 +216,7 @@ async function recalculateChildPrivacyAuthorization(childId) {
 }
 
 /**
- * Actualiza todos los menores asociados a un tutor.
+ * Updates every minor associated with a guardian.
  */
 async function recalculateChildrenForParent(uid) {
   const snapshot = await db.collection('children')
@@ -284,9 +296,12 @@ async function getConsent(uid) {
 
   const valid =
     consent.revocationPending !== true &&
-    consent.status !== 'revoked' &&
+    ['active', 'partially_revoked'].includes(consent.status) &&
     consent.termsVersion === TERMS_VERSION &&
-    consent.privacyVersion === PRIVACY_VERSION;
+    consent.privacyVersion === PRIVACY_VERSION &&
+    consent.acceptTerms === true &&
+    consent.acknowledgePrivacy === true &&
+    consent.guardianDeclaration === true;
 
   return {
     exists: true,
@@ -316,7 +331,7 @@ async function revokeConsent(uid, purpose) {
     .collection('privacy_events')
     .doc();
 
-  // Fase 1: activar el bloqueo antes de recalcular perfiles.
+  // Phase 1: set the block before recomputing profiles.
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(currentRef);
 
@@ -345,10 +360,10 @@ async function revokeConsent(uid, purpose) {
     });
   });
 
-  // Mientras la marca esté activa, el recálculo deniega todas las finalidades.
+  // While the mark is set, recomputation denies every purpose.
   await recalculateChildrenForParent(uid);
 
-  // Fase 2: finalizar únicamente si esta operación sigue siendo la vigente.
+  // Phase 2: finish only if this operation is still the current one.
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(currentRef);
 
@@ -399,7 +414,7 @@ async function revokeConsent(uid, purpose) {
     });
   });
 
-  // Actualizar el estado definitivo de todos los perfiles asociados.
+  // Update the final state of every associated profile.
   await recalculateChildrenForParent(uid);
 
   return {
@@ -419,8 +434,26 @@ async function getDevicePrivacyStatus(deviceUid) {
   const deviceRef = db.collection('devices').doc(deviceUid);
   const deviceSnap = await deviceRef.get();
 
+  // Explicit "not linked" answer. The Tracker tells it apart from a
+  // network failure and clears its local state instead of retrying forever.
+  const unlinkedResponse = (reason) => ({
+    linked: false,
+    authorized: false,
+    status: 'unlinked',
+    reason,
+    purposes: deniedPurposes(),
+    policy: 'all_guardians_must_authorize',
+  });
+
+  if (!deviceSnap.exists) {
+    return unlinkedResponse('device_not_found');
+  }
+
+  if (deviceSnap.data().status === 'desvinculado') {
+    return unlinkedResponse('unlinked_by_guardian');
+  }
+
   if (
-    !deviceSnap.exists ||
     deviceSnap.data().status !== 'vinculado' ||
     deviceSnap.data().deviceUid !== deviceUid ||
     typeof deviceSnap.data().childId !== 'string' ||
@@ -438,11 +471,12 @@ async function getDevicePrivacyStatus(deviceUid) {
   const childSnap = await childRef.get();
 
   if (!childSnap.exists) {
-    throw new ServiceError(
-      403,
-      'permission-denied',
-      'No se encontró el perfil vinculado.'
-    );
+    return unlinkedResponse('profile_deleted');
+  }
+
+  if (childSnap.data().deviceUid !== deviceUid) {
+    // The profile was linked to another device after this one.
+    return unlinkedResponse('replaced_by_another_device');
   }
 
   const child = childSnap.data();
@@ -473,8 +507,8 @@ async function getDevicePrivacyStatus(deviceUid) {
 
   const consentSnapshots = await db.getAll(...consentRefs);
 
-  // Denegación por defecto: cada tutor debe tener un consentimiento
-  // válido y autorizar individualmente cada finalidad.
+  // Deny by default: every guardian must have a valid consent
+  // and authorise each purpose individually.
   const validConsents = consentSnapshots.map((snapshot) => {
     if (!snapshot.exists) return null;
 
@@ -503,6 +537,7 @@ async function getDevicePrivacyStatus(deviceUid) {
 
   return {
     linked: true,
+    childId,
     authorized: Object.values(purposes).some(Boolean),
     status: Object.values(purposes).some(Boolean)
       ? 'authorized'

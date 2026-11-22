@@ -70,7 +70,7 @@ test('autorización unánime de tutores por finalidad', async () => {
       childId,
     });
 
-    // 1. Si falta el consentimiento de ambos tutores, se deniega todo.
+    // 1. If both guardians' consent is missing, everything is denied.
     await acceptConsent(parent1, consentInput);
     let result = await getDevicePrivacyStatus(deviceUid);
 
@@ -79,7 +79,7 @@ test('autorización unánime de tutores por finalidad', async () => {
       assert.equal(result.purposes[purpose], false);
     }
 
-    // 2. Cuando ambos aceptan, se habilitan todas las finalidades.
+    // 2. When both accept, every purpose is enabled.
     await acceptConsent(parent2, consentInput);
     result = await getDevicePrivacyStatus(deviceUid);
 
@@ -88,7 +88,7 @@ test('autorización unánime de tutores por finalidad', async () => {
       assert.equal(result.purposes[purpose], true);
     }
 
-    // Verificar bloqueo temporal durante una revocación.
+    // Check the temporary block during a revocation.
     const consentRef = db.collection('users').doc(parent2)
       .collection('privacy_consents').doc('current');
     await consentRef.update({ revocationPending: true, revocationId: 'test-pending' });
@@ -103,7 +103,7 @@ test('autorización unánime de tutores por finalidad', async () => {
     await consentRef.update({ revocationPending: false, revocationId: null });
     await recalculateChildPrivacyAuthorization(childId);
 
-    // 3. Si un tutor revoca ubicación, solo se desactiva esa finalidad.
+    // 3. If a guardian revokes location, only that purpose is turned off.
     await revokeConsent(parent2, 'location');
     result = await getDevicePrivacyStatus(deviceUid);
 
