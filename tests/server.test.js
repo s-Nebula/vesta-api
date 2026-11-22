@@ -29,6 +29,10 @@ test('API HTTP: salud, rutas y autenticación', async (t) => {
   const missing = await fetch(`${base}/ruta-inexistente`);
   assert.equal(missing.status, 404);
 
+  // Delete the account without authentication.
+  const deleteAccount = await fetch(`${base}/api/account`, { method: 'DELETE' });
+  assert.equal(deleteAccount.status, 401);
+
   // Create a profile without authentication.
   const create = await fetch(`${base}/api/children`, {
     method: 'POST',

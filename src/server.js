@@ -5,6 +5,7 @@ const { rateLimit } = require('express-rate-limit');
 const childrenRouter = require('./routes/children');
 const devicesRouter = require('./routes/devices');
 const privacyRouter = require('./routes/privacy');
+const accountRouter = require('./routes/account');
 const { ServiceError } = require('./services/child_service');
 
 const app = express();
@@ -35,6 +36,7 @@ app.use('/api', apiLimiter);
 app.use('/api/children', childrenRouter);
 app.use('/api/devices', devicesRouter);
 app.use('/api/privacy', privacyRouter);
+app.use('/api/account', accountRouter);
 
 app.use((req, res) => {
   res.status(404).json({
