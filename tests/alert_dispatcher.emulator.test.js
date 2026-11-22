@@ -186,3 +186,39 @@ test('formatDuration', () => {
   assert.equal(formatDuration(3 * 3600000), '3 horas');
   assert.equal(formatDuration(2.5 * 3600000), '2.5 horas');
 });
+
+test('sends each guardian the push in the language of their app', async () => {
+  const seeded = await seedChild();
+  await db.collection('users').doc(seeded.parent).collection('fcmTokens')
+    .doc('t3').set({ token: 'token-ingles', lang: 'en' });
+  const messaging = fakeMessaging();
+  const dispatcher = createAlertDispatcher({
+    db, messaging, FieldValue, logger: silent,
+  });
+
+  try {
+    // Written by a minor's phone in Spanish.
+    const alertRef = await db.collection('children').doc(seeded.childId)
+      .collection('alerts').add({
+        title: 'Llegó a Colegio',
+        subtitle: 'El dispositivo entró en la zona segura "Colegio".',
+        type: 'info',
+        eventKey: 'zone_enter',
+        zoneName: 'Colegio',
+        timestamp: FieldValue.serverTimestamp(),
+      });
+
+    await dispatcher.sendAlert(seeded.childId, alertRef.id, alertRef);
+
+    const byToken = Object.fromEntries(
+      messaging.sent.map((m) => [m.tokens.join(','), m.notification])
+    );
+    assert.equal(messaging.sent.length, 2);
+    assert.equal(byToken['token-valido,token-invalido'].title, 'ℹ️ Lucía: Llegó a Colegio');
+    assert.equal(byToken['token-ingles'].title, 'ℹ️ Lucía: Arrived at Colegio');
+    assert.equal(byToken['token-ingles'].body, 'The device entered the safe zone "Colegio".');
+  } finally {
+    dispatcher.stop();
+    await cleanup(seeded);
+  }
+});

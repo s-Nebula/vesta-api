@@ -19,6 +19,8 @@
  * collection-group indexes).
  */
 
+const texts = require('./push_texts');
+
 const DEFAULTS = Object.freeze({
   // Alerts older than this are not notified on start-up (avoids notifying
   // everything that happened while the server was down all at once).
@@ -53,12 +55,7 @@ function purposesAllow(child, ...purposes) {
     purposes.every((purpose) => auth?.purposes?.[purpose] === true);
 }
 
-function formatDuration(ms) {
-  const minutes = Math.round(ms / 60000);
-  if (minutes < 120) return `${minutes} minutos`;
-  const hours = ms / 3600000;
-  return `${hours.toFixed(1).replace('.0', '')} horas`;
-}
+const formatDuration = texts.formatDuration;
 
 function createAlertDispatcher({
   db,
@@ -105,10 +102,31 @@ function createAlertDispatcher({
       )
     );
     const docs = snapshots.flatMap((snapshot) => snapshot.docs);
-    const tokens = [...new Set(
-      docs.map((doc) => doc.data().token).filter((t) => typeof t === 'string' && t)
-    )];
-    return { docs, tokens };
+    // Language of each token: the one the guardian's app uses (Spanish if unknown).
+    const langOf = new Map();
+    for (const doc of docs) {
+      const data = doc.data();
+      if (typeof data.token === 'string' && data.token && !langOf.has(data.token)) {
+        langOf.set(data.token, texts.normalizeLang(data.lang));
+      }
+    }
+    const tokens = [...langOf.keys()];
+    return { docs, tokens, langOf };
+  }
+
+  /**
+   * Sends one push per language: `build(lang)` returns { title, body }.
+   * Returns the number of devices reached.
+   */
+  async function pushLocalized({ tokens, docs, langOf, build, data, priority, tag }) {
+    let sent = 0;
+    for (const lang of texts.LANGS) {
+      const group = tokens.filter((token) => langOf.get(token) === lang);
+      if (group.length === 0) continue;
+      const { title, body } = build(lang);
+      sent += await push({ tokens: group, docs, title, body, data, priority, tag });
+    }
+    return sent;
   }
 
   async function push({ tokens, docs, title, body, data, priority, tag }) {
@@ -173,24 +191,26 @@ function createAlertDispatcher({
       const type = typeof alert.type === 'string' ? alert.type : 'critical';
       const parentIds = Array.isArray(child.parentIds) ? child.parentIds : [];
       // "Only critical alerts instantly": the rest stay in the app and the summary.
-      const { docs, tokens } = await tokensFor(
+      const { docs, tokens, langOf } = await tokensFor(
         parentIds,
         (prefs) => type === 'critical' || prefs.instant !== 'critical'
       );
 
-      const name = typeof child.nombre === 'string' ? child.nombre : 'Menor';
-      const title = String(alert.title || 'Incidente detectado').slice(0, 120);
-      const body = String(alert.subtitle || 'Vesta ha registrado una alerta.')
-        .slice(0, 300);
       const icon = alert.eventKey === 'sos'
         ? '🆘'
         : type === 'critical' ? '🚨' : type === 'warning' ? '⚠️' : 'ℹ️';
 
-      const sent = await push({
+      const sent = await pushLocalized({
         tokens,
         docs,
-        title: `${icon} ${name}: ${title}`,
-        body,
+        langOf,
+        build: (lang) => {
+          const text = texts.alertText(alert, lang);
+          return {
+            title: `${icon} ${texts.minorName(child, lang)}: ${text.title.slice(0, 120)}`,
+            body: text.body.slice(0, 300),
+          };
+        },
         data: {
           childId,
           alertId,
@@ -224,21 +244,13 @@ function createAlertDispatcher({
       if (!purposesAllow(child, 'app_filtering')) return;
 
       const parentIds = Array.isArray(child.parentIds) ? child.parentIds : [];
-      const { docs, tokens } = await tokensFor(parentIds);
-      const name = typeof child.nombre === 'string' ? child.nombre : 'Menor';
-      const app = String(request.appName || request.packageName || 'una app')
-        .slice(0, 100);
-      const verb = request.type === 'extra_time'
-        ? `pide ${request.minutes} min más de ${app}`
-        : `pide usar ${app} durante ${request.minutes} min`;
+      const { docs, tokens, langOf } = await tokensFor(parentIds);
 
-      await push({
+      await pushLocalized({
         tokens,
         docs,
-        title: `🙋 ${name} ${verb}`,
-        body: request.message
-          ? `"${String(request.message).slice(0, 200)}" · Toca para responder`
-          : 'Toca para aprobar o rechazar.',
+        langOf,
+        build: (lang) => texts.requestText(request, texts.minorName(child, lang), lang),
         data: { childId, requestId, kind: 'request' },
         priority: 'high',
         tag: `request-${requestId}`,
@@ -345,11 +357,13 @@ function createAlertDispatcher({
           updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
 
+        // Stored in Spanish for the in-app list; `offlineMinutes` lets the
+        // push be written in each guardian's language.
+        const [title, subtitle] = texts.deviceOfflineText(offlineFor).es;
         transaction.create(childDoc.ref.collection('alerts').doc(), {
-          title: 'Dispositivo sin conexión',
-          subtitle: `Vesta Tracker no envía datos desde hace ` +
-            `${formatDuration(offlineFor)}. Puede estar apagado, sin batería, ` +
-            `sin internet o con la app detenida.`,
+          title,
+          subtitle,
+          offlineMinutes: Math.round(offlineFor / 60000),
           type: 'critical',
           eventKey: 'device_offline',
           source: 'server',
@@ -380,14 +394,6 @@ function createAlertDispatcher({
     const mm = String(date.getMonth() + 1).padStart(2, '0');
     const dd = String(date.getDate()).padStart(2, '0');
     return `${date.getFullYear()}-${mm}-${dd}`;
-  }
-
-  function formatHours(ms) {
-    const minutes = Math.round(ms / 60000);
-    if (minutes < 60) return `${minutes} min`;
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return m === 0 ? `${h} h` : `${h} h ${m} min`;
   }
 
   /** Computes and stores a minor's summary of the last 7 days. */
@@ -475,28 +481,17 @@ function createAlertDispatcher({
       const summary = await buildWeeklySummary(childDoc, at);
       if (!summary) continue; // already generated this week
 
-      const name = typeof child.nombre === 'string' ? child.nombre : 'Menor';
-      const parts = [];
-      if (summary.usage?.daysWithData) {
-        parts.push(`${formatHours(summary.usage.averageDailyMs)}/día de pantalla`);
-        const top = summary.usage.topApps[0];
-        if (top) parts.push(`más usada: ${top.appName}`);
-      }
-      parts.push(summary.alerts.total === 0
-        ? 'sin alertas'
-        : `${summary.alerts.total} alertas (${summary.alerts.byType.critical} críticas)`);
-
       const parentIds = Array.isArray(child.parentIds) ? child.parentIds : [];
-      const { docs, tokens } = await tokensFor(
+      const { docs, tokens, langOf } = await tokensFor(
         parentIds,
         (prefs) => prefs.weeklySummary !== false
       );
 
-      await push({
+      await pushLocalized({
         tokens,
         docs,
-        title: `📊 Resumen semanal de ${name}`,
-        body: parts.join(' · '),
+        langOf,
+        build: (lang) => texts.weeklySummaryText(summary, texts.minorName(child, lang), lang),
         data: { childId: childDoc.id, kind: 'weekly_summary', weekId: summary.weekId },
         priority: 'normal',
         tag: `summary-${childDoc.id}-${summary.weekId}`,

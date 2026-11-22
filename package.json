@@ -4,7 +4,7 @@
   "description": "",
   "main": "legacy-functions.js",
   "scripts": {
-    "test": "VESTA_TERMS_VERSION=1.1.0 VESTA_PRIVACY_VERSION=1.1.0 node --test tests/child_service.test.js tests/server.test.js tests/privacy_service.test.js",
+    "test": "VESTA_TERMS_VERSION=1.1.0 VESTA_PRIVACY_VERSION=1.1.0 node --test tests/child_service.test.js tests/server.test.js tests/privacy_service.test.js tests/push_texts.test.js",
     "start": "node src/server.js",
     "test:emulator": "node --test tests/child_service.emulator.test.js",
     "test:emulator:all": "firebase emulators:exec --only firestore --project demo-vesta 'GCLOUD_PROJECT=demo-vesta node --test tests/*.emulator.test.js'"
