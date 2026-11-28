@@ -55,3 +55,12 @@ test('requests and weekly summary', () => {
   assert.equal(t.weeklySummaryText(summary, 'Ana', 'es').body,
     '1 h 30 min/día de pantalla · más usada: YouTube · 3 alertas (1 crítica)');
 });
+
+test('webLink: the web panel screen each push opens', () => {
+  const { webLink } = require('../src/services/alert_dispatcher');
+  const base = 'https://app.vestasecurity.date/';
+  assert.equal(webLink(base, { childId: 'a b', kind: 'alert' }), 'https://app.vestasecurity.date/#/home/a%20b?tab=alerts');
+  assert.equal(webLink(base, { childId: 'x', kind: 'request' }), 'https://app.vestasecurity.date/#/home/x?open=requests');
+  assert.equal(webLink(base, { childId: 'x', kind: 'weekly_summary' }), 'https://app.vestasecurity.date/#/home/x?tab=reports');
+  assert.equal(webLink(base, {}), 'https://app.vestasecurity.date/');
+});

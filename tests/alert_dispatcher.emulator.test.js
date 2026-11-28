@@ -106,6 +106,10 @@ test('envía una sola push por alerta y limpia tokens inválidos', async () => {
     assert.equal(messaging.sent[0].notification.title, '🚨 Lucía: Aplicación bloqueada');
     assert.equal(messaging.sent[0].data.childId, seeded.childId);
     assert.equal(messaging.sent[0].android.notification.channelId, 'vesta_alerts');
+    assert.equal(
+      messaging.sent[0].webpush.fcmOptions.link,
+      `https://app.vestasecurity.date/#/home/${seeded.childId}?tab=alerts`
+    );
 
     const alert = await alertRef.get();
     assert.ok(alert.data().pushSentAt);

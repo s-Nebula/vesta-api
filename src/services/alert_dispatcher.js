@@ -29,6 +29,8 @@ const DEFAULTS = Object.freeze({
   watchdogIntervalMs: 5 * 60 * 1000,
   recentAlertsPerChild: 20,
   androidChannelId: 'vesta_alerts',
+  // Web panel: tapping a browser notification opens this app.
+  webAppUrl: process.env.VESTA_WEB_APP_URL || 'https://app.vestasecurity.date',
   summaryCheckIntervalMs: 60 * 60 * 1000,
   // Sunday (0) from 19:00, server local time.
   summaryWeekday: 0,
@@ -56,6 +58,25 @@ function purposesAllow(child, ...purposes) {
 }
 
 const formatDuration = texts.formatDuration;
+
+/**
+ * Web panel screen a push opens (hash URLs of the Flutter web app), the
+ * same places the phone app opens from a notification.
+ */
+function webLink(baseUrl, data = {}) {
+  const base = String(baseUrl || '').replace(/\/+$/, '');
+  const childId = typeof data.childId === 'string' ? data.childId : '';
+  if (!childId) return `${base}/`;
+  const id = encodeURIComponent(childId);
+  switch (data.kind) {
+    case 'request':
+      return `${base}/#/home/${id}?open=requests`;
+    case 'weekly_summary':
+      return `${base}/#/home/${id}?tab=reports`;
+    default:
+      return `${base}/#/home/${id}?tab=alerts`;
+  }
+}
 
 function createAlertDispatcher({
   db,
@@ -145,6 +166,15 @@ function createAlertDispatcher({
         },
       },
       apns: { payload: { aps: { sound: 'default' } } },
+      // Browsers (web panel). Same tag: a repeated alert replaces the old one.
+      webpush: {
+        notification: {
+          icon: `${config.webAppUrl}/icons/Icon-192.png`,
+          badge: `${config.webAppUrl}/icons/Icon-192.png`,
+          ...(tag ? { tag } : {}),
+        },
+        fcmOptions: { link: webLink(config.webAppUrl, data) },
+      },
     });
 
     const invalid = new Set();
@@ -561,4 +591,4 @@ function createAlertDispatcher({
   };
 }
 
-module.exports = { createAlertDispatcher, purposesAllow, formatDuration };
+module.exports = { createAlertDispatcher, purposesAllow, formatDuration, webLink };
