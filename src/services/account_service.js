@@ -82,6 +82,40 @@ async function detachOrDeleteChild(uid, childRef) {
 }
 
 /**
+ * Deletes one profile from the guardian's panel (DELETE /api/children/:id).
+ * Same rule as account deletion: a profile shared with other guardians only
+ * loses this guardian; otherwise it is deleted with all its data and its
+ * device is unlinked. Returns { success, childId, result: 'kept'|'deleted' }.
+ */
+async function deleteChild(uid, childIdInput) {
+  const childId = String(childIdInput || '').trim();
+
+  if (!childId || childId.length > 150 || childId.includes('/')) {
+    throw new ServiceError(400, 'invalid-argument', 'Falta childId válido.');
+  }
+
+  const childRef = db.collection('children').doc(childId);
+  const snap = await childRef.get();
+
+  if (!snap.exists) {
+    throw new ServiceError(404, 'not-found', 'Perfil no encontrado.');
+  }
+
+  const parentIds = snap.data().parentIds;
+  if (!Array.isArray(parentIds) || !parentIds.includes(uid)) {
+    throw new ServiceError(403, 'permission-denied', 'Acceso denegado.');
+  }
+
+  const result = await detachOrDeleteChild(uid, childRef);
+
+  if (result === 'gone') {
+    throw new ServiceError(404, 'not-found', 'Perfil no encontrado.');
+  }
+
+  return { success: true, childId, result };
+}
+
+/**
  * Deletes a guardian account: their profiles (or their place in shared
  * profiles), their user document with tokens and consents, and the
  * Firebase Authentication user. Leaves only an anonymous record that the
@@ -128,5 +162,6 @@ async function deleteAccount(uid, decodedToken, { authClient = auth } = {}) {
 module.exports = {
   RECENT_LOGIN_MS,
   assertRecentLogin,
+  deleteChild,
   deleteAccount,
 };

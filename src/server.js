@@ -13,6 +13,32 @@ app.set('trust proxy', 'loopback');
 
 app.disable('x-powered-by');
 app.use(helmet());
+
+// Web panel (Vesta Padre in the browser, vestasecurity.date/app). Only these origins may call the
+// API from a page; the apps are not affected (no Origin header). The token
+// travels in Authorization, never in cookies, so no credentials are allowed.
+const WEB_ORIGINS = new Set(
+  (process.env.VESTA_WEB_ORIGINS ||
+    'https://vestasecurity.date,https://app.vestasecurity.date')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+
+app.use((req, res, next) => {
+  const origin = req.get('Origin');
+  res.vary('Origin');
+  if (!origin || !WEB_ORIGINS.has(origin)) return next();
+
+  res.set('Access-Control-Allow-Origin', origin);
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE');
+    res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept');
+    res.set('Access-Control-Max-Age', '600');
+    return res.status(204).end();
+  }
+  next();
+});
 app.use(express.json({ limit: '32kb' }));
 
 const apiLimiter = rateLimit({

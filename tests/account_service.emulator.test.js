@@ -8,7 +8,7 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 
 const { db } = require('../src/config/firebase');
 const { createChild, linkDevice } = require('../src/services/child_service');
-const { deleteAccount } = require('../src/services/account_service');
+const { deleteAccount, deleteChild } = require('../src/services/account_service');
 
 const freshToken = () => ({ auth_time: Math.floor(Date.now() / 1000) });
 
@@ -75,4 +75,38 @@ test('eliminar la cuenta con un inicio de sesión antiguo no borra nada', async 
   );
   assert.equal((await db.collection('users').doc(uid).get()).exists, true);
   await db.collection('users').doc(uid).delete();
+});
+
+test('eliminar un perfil propio lo borra y desvincula; uno compartido solo quita al tutor', async () => {
+  const uid = `delchild-parent-${crypto.randomUUID()}`;
+  const otherUid = `delchild-other-${crypto.randomUUID()}`;
+  const strangerUid = `delchild-stranger-${crypto.randomUUID()}`;
+  const deviceUid = `delchild-device-${crypto.randomUUID()}`;
+
+  const own = await createChild(uid, { nombre: 'Propio', edad: 9, color: 1 });
+  await linkDevice(deviceUid, own.pairingCode);
+  const ownRef = db.collection('children').doc(own.childId);
+  await ownRef.collection('alerts').doc('a1').set({ type: 'sos' });
+
+  await assert.rejects(deleteChild(strangerUid, own.childId), { status: 403 });
+  assert.equal((await ownRef.get()).exists, true);
+
+  assert.deepEqual(await deleteChild(uid, own.childId), {
+    success: true, childId: own.childId, result: 'deleted',
+  });
+  assert.equal((await ownRef.get()).exists, false);
+  assert.equal((await ownRef.collection('alerts').get()).size, 0);
+  assert.equal((await db.collection('pairing_codes').where('childId', '==', own.childId).get()).size, 0);
+  const device = (await db.collection('devices').doc(deviceUid).get()).data();
+  assert.equal(device.status, 'desvinculado');
+  assert.equal(device.childId, null);
+
+  await assert.rejects(deleteChild(uid, own.childId), { status: 404 });
+
+  const shared = await createChild(uid, { nombre: 'Compartido', edad: 11, color: 2 });
+  const sharedRef = db.collection('children').doc(shared.childId);
+  await sharedRef.update({ parentIds: [uid, otherUid] });
+
+  assert.equal((await deleteChild(uid, shared.childId)).result, 'kept');
+  assert.deepEqual((await sharedRef.get()).data().parentIds, [otherUid]);
 });

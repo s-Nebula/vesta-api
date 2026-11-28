@@ -7,6 +7,7 @@ const {
   regeneratePairingCode,
   unlinkDevice,
 } = require('../services/child_service');
+const { deleteChild } = require('../services/account_service');
 
 const {
   authenticate,
@@ -48,6 +49,21 @@ router.patch(
         req.params.childId,
         req.body
       );
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// Delete the profile (or leave it, if other guardians share it).
+router.delete(
+  '/:childId',
+  authenticate,
+  requireParent,
+  async (req, res, next) => {
+    try {
+      const result = await deleteChild(req.auth.uid, req.params.childId);
       res.json(result);
     } catch (error) {
       next(error);

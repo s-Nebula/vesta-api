@@ -33,6 +33,25 @@ test('API HTTP: salud, rutas y autenticación', async (t) => {
   const deleteAccount = await fetch(`${base}/api/account`, { method: 'DELETE' });
   assert.equal(deleteAccount.status, 401);
 
+  // CORS: the web panel's origin is allowed; any other is not.
+  const preflight = await fetch(`${base}/api/children/abc`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://app.vestasecurity.date',
+      'Access-Control-Request-Method': 'DELETE',
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://app.vestasecurity.date');
+  assert.match(preflight.headers.get('access-control-allow-headers'), /Authorization/);
+
+  const foreign = await fetch(`${base}/health`, { headers: { Origin: 'https://evil.example' } });
+  assert.equal(foreign.headers.get('access-control-allow-origin'), null);
+
+  // Delete a profile without authentication.
+  const deleteChild = await fetch(`${base}/api/children/abc`, { method: 'DELETE' });
+  assert.equal(deleteChild.status, 401);
+
   // Create a profile without authentication.
   const create = await fetch(`${base}/api/children`, {
     method: 'POST',
